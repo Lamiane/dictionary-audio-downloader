@@ -2,8 +2,6 @@
 # usage: download_dictionary_audio.py examplary_word_list --mode ogg
 # usage: download_dictionary_audio.py examplary_word_list --path /directory/to/store/stuff
 
-import sys
-
 import os
 import re
 import argparse
@@ -12,40 +10,52 @@ import urllib.request
 import wget
 
 
+# variables needed to work with dictionary.com
 dictionary_url = "https://www.dictionary.com/browse/"
-prefix = "<audio preload"
-sufix = "</audio>"
+word_pre = "css-1jzk4d9 e1rg2mtf8\">"
+word_suf = "</h"
+audio_pre = "<audio preload"
+audio_suf = "</audio>"
+pos_pre = "class=\"luna-pos\">"
+pos_suf = "</span>"
+pattern = re.compile(word_pre+"(.*?)"+word_suf+".*?"+audio_pre+"(.*?)"+audio_suf+".*?"+pos_pre+"(.*?)"+pos_suf)
 
 all_modes = ["mp3", "ogg"]
 
 def download_and_save(url, download_directory):
     ### returns 1 for success, 0 for failure
     try:
-        wget.download(url, out=download_directory)
+        wget.download(url, out=download_directory, bar=wget.bar_thermometer)
         # TODO some way to make sure the file has been downloaded
         return 1
     except:
         return 0
     
 
-def filename_wrapper(word, path, extension):
-    return os.path.join(path, word+"."+extension)
+def filename_wrapper(word, pos, path, extension):
+    return os.path.join(path, word+"-"+pos+"."+extension)
 
 
-def extract_urls(text):
-    pre = "src="
-    suf = " t"
-    pattern = re.compile(pre+".*?"+suf)
-    all_urls = [x.strip(pre).strip(suf).strip("\"") for x in pattern.findall(text)]
+def extract_urls(list_of_fragments):
+    pre_audio = "src="
+    suf_audio = " t"
+    pattern = re.compile(pre_audio+".*?"+suf_audio)
     urls = {}
-    for mode in all_modes:
-        urls[mode] = [x for x in all_urls if mode in x]
-        if len(urls[mode]) == 0:
-            urls.pop(mode)
-        elif len(urls[mode]) == 1:
-            urls[mode] = urls[mode][0]
-        else:
-            print(f"problems, problems, problems with urls,\n{urls[mode]}")
+
+    for html_fragment in list_of_fragments:
+        # get part of speech
+        pos = html_fragment[2].split(' ')[0].strip(',')
+        urls[pos] = {}
+        
+        # get urls
+        all_urls = [x.strip(pre_audio).strip(suf_audio).strip("\"") for x in pattern.findall(html_fragment[1])]
+        
+        for mode in all_modes:
+           mode_urls = [x for x in all_urls if mode in x]
+           if len(mode_urls) == 1:
+               urls[pos][mode] = mode_urls[0]
+           elif len(mode_urls) > 1:
+               print(f"problems, problems, for debugging, mode_urls is: {mode_urls}")
     return urls
 
 
@@ -64,14 +74,14 @@ if __name__=="__main__":
     # read words from file
     with open(args.word_list, "r") as f:
         all_words = f.readlines()
+    all_words = [w.strip().lower() for w in all_words]
 
-    non_default_mode = []
+    downloaded = []
+    non_exact = []
     not_in_dictionary = []
     no_audio = []
-    all_went_well = []
 
     for word in all_words:
-        word = word.strip()
         # get the dictionary.com HTML
         try:
             # retreive HTML
@@ -83,32 +93,40 @@ if __name__=="__main__":
             continue
        
         # parse html
-        pattern = re.compile(prefix+".*?"+sufix)
-        audio_lines = pattern.findall(html_content)
-
-        if len(audio_lines) == 1:
-            urls = extract_urls(audio_lines[0])
-            if args.mode in urls:
-                mode = args.mode
-            else:
-                mode = list(urls.keys())[0]
-            success = download_and_save(urls[mode], filename_wrapper(word, args.path, mode))
-            if success:
-                if mode == args.mode:
-                    all_went_well.append(word)
-                else:
-                    non_default_mode.append(word) 
+        audio_occurences = pattern.findall(html_content)
+        
+        word_was_downloaded_sumator = 0
+        if len(audio_occurences) >= 1:
+            # sometimes the word returned by dictionary.com is not the exact one
+            exact = True
+            processed_word = audio_occurences[0][0].lower()
+            if processed_word != word:
+                exact = False
             
-        elif len(audio_lines) > 1:
-            print(f"\nproblems, problems, too many audio_lines for word {word}")
-            print(audio_lines)
+            urls = extract_urls(audio_occurences)
+            for pos in urls.keys():
+                if args.mode in urls[pos]:
+                    mode = args.mode
+                else:
+                    mode = list(urls[pos].keys())[0]
+                success = download_and_save(urls[pos][mode], filename_wrapper(processed_word, pos, args.path, mode))
+                word_was_downloaded_sumator += success
+            if word_was_downloaded_sumator:
+                downloaded.append(word)
+                if not exact:
+                    non_exact.append((word, processed_word))
+            else:
+                no_audio.append(word)
         else:
             # no audio_lines have been found
             no_audio.append(word)
     
-    assert (set(all_words) == set(not_in_dictionary+non_default_mode+no_audio+all_went_well)), print(f"Pocha, sth went wrong, \n{set(all_words)},\n{set(not_in_dictionary+non_default_mode+no_audio+all_went_well)}")
-
-    print(f"the following words are not in the dictionary: {not_in_dictionary}")
-    print(f"the following words exist in the dictionary but could not be downloaded:; {no_audio}")
-    print(f"the following words were downloaded in the preferable format: {all_went_well}")
-    print(f"the following words were downloaded in other supported formats: {non_default_mode}")
+    print('\n')  # due to wget progess bar
+    assert (set(all_words) == set(not_in_dictionary+no_audio+downloaded)), print(f"well, well, sth went wrong, \n{set(all_words)},\n{set(not_in_dictionary+no_audio+downloaded)}")
+    
+    if len(not_in_dictionary) > 0:
+        print(f"the following words are not in the dictionary: {not_in_dictionary}")
+    if len(no_audio) > 0:    
+        print(f"the following words exist in the dictionary but could not be downloaded: {no_audio}")
+    if len(non_exact) > 0:
+        print(f"instead of some words which were not in the dictionary, similar words have been downloaded: {non_exact}")
