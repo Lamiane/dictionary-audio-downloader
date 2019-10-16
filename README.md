@@ -6,11 +6,11 @@ You'll need python3 and the following packages: python-wget, traceback, urllib.r
 
 ### Running
 
-`download_dictionary_audio.py examplary_word_list`
+`python download_dictionary_audio.py examplary_word_list`
 
 downloads audio for words present in the text file called `examplary_word_list`. Each word in the file should be in a separate line.
 
-`download_dictionary_audio.py examplary_word_list --mode ogg --path /directory/to/store/stuff`
+`python download_dictionary_audio.py examplary_word_list --mode ogg --path /directory/to/store/stuff`
 
 The option `--mode` allows to specify the preferable format of the downloaded files. Currently mp3 and ogg are supported and mp3 is default. In case the audio in the preferable format is not available, the audio in the other format will be downloaded.
 
